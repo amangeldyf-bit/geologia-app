@@ -187,6 +187,85 @@ def guess_lan_ip():
 
 initialize()
 init_presentations()
+
+# Сабақтың төрт кезеңі: 20 + 30 + 30 + 20 = 100.
+OIL_STEPS = [
+    "Геологиялық деректерді жинау және талдау",
+    "Геофизикалық (сейсмикалық) барлау жүргізу",
+    "Перспективалы тұтқыш құрылымды анықтау",
+    "Барлау ұңғымасын бұрғылау",
+    "Ұңғыма нәтижелерін зерттеп, қорды бағалау",
+]
+ORAL_SIX = [
+    "Нейтрондардың тау жыныстарымен әрекеттесуін түсіндіріңіз.",
+    "Гамма-кванттардың тау жыныстарымен әрекеттесуін түсіндіріңіз.",
+    "Ядролық магниттік прецессия дегеніміз не?",
+    "Кеуектілік дегеніміз не және оның түрлері қандай?",
+    "Өткізгіштік дегеніміз не және оның түрлері қандай?",
+    "Поляризация құбылысы дегеніміз не?",
+]
+TEAM_NAMES = ["1-топ — Геофизиктер", "2-топ — Петрофизиктер", "3-топ — Зерттеушілер"]
+GROUP_CRITERIA = [("Ғылыми дұрыстық", 10), ("Презентация мазмұны мен көрнекілігі", 8), ("Топ мүшелерінің қатысуы", 6), ("Қорғау сапасы", 6)]
+
+def student_key_for(name, group):
+    return normalize(group) + "|" + normalize(name)
+
+def init_lesson():
+    with get_conn() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS oil_discovery (
+            student_key TEXT PRIMARY KEY, student_name TEXT NOT NULL, group_name TEXT NOT NULL,
+            team_name TEXT NOT NULL, score INTEGER NOT NULL, submitted_at TEXT NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS six_answers (
+            student_key TEXT PRIMARY KEY, student_name TEXT NOT NULL, group_name TEXT NOT NULL,
+            team_name TEXT NOT NULL, q1 INTEGER NOT NULL, q2 INTEGER NOT NULL,
+            q3 INTEGER NOT NULL, q4 INTEGER NOT NULL, q5 INTEGER NOT NULL,
+            q6 INTEGER NOT NULL, score INTEGER NOT NULL, submitted_at TEXT NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS group_assessment (
+            group_name TEXT NOT NULL, team_name TEXT NOT NULL,
+            k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, k3 INTEGER NOT NULL,
+            k4 INTEGER NOT NULL, score INTEGER NOT NULL, submitted_at TEXT NOT NULL,
+            PRIMARY KEY (group_name, team_name))""")
+
+def read_lesson_table(table):
+    allowed = {"oil_discovery", "six_answers", "group_assessment"}
+    if table not in allowed:
+        raise ValueError("Unknown table")
+    with get_conn() as conn:
+        return pd.read_sql_query("SELECT * FROM " + table, conn)
+
+def final_scores():
+    oil = read_lesson_table("oil_discovery")
+    oral = read_lesson_table("six_answers")
+    quiz = get_results()
+    teams = read_lesson_table("group_assessment")
+    students = {}
+    for df in (oil, oral, quiz):
+        for _, r in df.iterrows():
+            key = r["student_key"]
+            students.setdefault(key, {"Аты-жөні": r["student_name"], "Сынып/топ": r["group_name"], "Команда": ""})
+            if "team_name" in r and pd.notna(r["team_name"]):
+                students[key]["Команда"] = r["team_name"]
+    rows = []
+    oil_map = {r["student_key"]: int(r["score"]) for _, r in oil.iterrows()}
+    oral_map = {r["student_key"]: int(r["score"]) for _, r in oral.iterrows()}
+    quiz_map = {r["student_key"]: round(float(r["score"]) / float(r["total"]) * 20, 1) for _, r in quiz.iterrows() if r["total"]}
+    team_map = {(normalize(r["group_name"]), r["team_name"]): int(r["score"]) for _, r in teams.iterrows()}
+    for key, info in students.items():
+        team = info["Команда"]
+        team_key = (normalize(info["Сынып/топ"]), team)
+        group_points = team_map.get(team_key) if team else None
+        parts = [oil_map.get(key), oral_map.get(key), group_points, quiz_map.get(key)]
+        total = round(sum(x for x in parts if x is not None), 1)
+        completed = sum(x is not None for x in parts)
+        rows.append({**info, "Мұнай іздеу /20": parts[0], "6 сұрақ /30": parts[1],
+                     "Топтық /30": parts[2], "Бекіту /20": parts[3],
+                     "Жиыны /100": total, "Кезең": f"{completed}/4",
+                     "Әріптік баға": letter_for(total) if completed == 4 else "Аяқталмаған",
+                     "Баға": grade_for(total) if completed == 4 else "—"})
+    return pd.DataFrame(rows)
+
+init_lesson()
+
 st.markdown("""
 <style>
 .block-container {max-width: 1050px; padding-top: 2rem;}
@@ -194,9 +273,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🛢️ Геологиялық экспедиция")
-st.caption("1-бағалау: интерактивті тапсырмалар • 2-бағалау: ауызша сұрақ-жауап")
+st.caption("4 кезең: мұнайды іздеу /20 • 6 сұрақ /30 • топтық жұмыс /30 • бекіту /20")
 
-student_tab, upload_tab, teacher_tab = st.tabs(["📱 Студент", "📤 Презентация жіберу", "👩‍🏫 Мұғалім"])
+student_tab, oil_tab, upload_tab, teacher_tab = st.tabs(["📱 Бекіту тесті", "🛢️ Мұнайды қалай табамыз?", "📤 Презентация жіберу", "👩‍🏫 Мұғалім"])
 
 with student_tab:
     if st.session_state.get("completed"):
@@ -275,6 +354,34 @@ with student_tab:
                     st.session_state["completed"] = True
                     st.rerun()
 
+
+with oil_tab:
+    st.subheader("🛢️ Мұнайды қалай табамыз? — 20 балл")
+    st.write("Мұнайды іздеудің 5 кезеңін дұрыс ретімен таңдаңыз. Әр дұрыс орын — 4 балл.")
+    with st.form("oil_steps_form"):
+        oil_name = st.text_input("Аты-жөніңіз", key="oil_student_name")
+        oil_class = st.text_input("Сынып/топ атауы (мысалы, ГР-31)", key="oil_class")
+        oil_team = st.selectbox("Командаңыз", TEAM_NAMES, key="oil_team")
+        oil_picks = []
+        for i in range(5):
+            oil_picks.append(st.selectbox(f"{i+1}-кезең", OIL_STEPS, index=None, placeholder="Кезеңді таңдаңыз", key=f"oil_step_{i}"))
+        oil_submit = st.form_submit_button("Жауапты жіберу", type="primary")
+    if oil_submit:
+        if not oil_name.strip() or not oil_class.strip() or any(v is None for v in oil_picks):
+            st.error("Аты-жөніңізді, сынып/топты және барлық кезеңді толтырыңыз.")
+        elif len(set(oil_picks)) != 5:
+            st.error("Бір кезеңді екі рет таңдауға болмайды.")
+        else:
+            oil_points = sum(4 for actual, expected in zip(oil_picks, OIL_STEPS) if actual == expected)
+            key = student_key_for(oil_name, oil_class)
+            with get_conn() as conn:
+                existing = conn.execute("SELECT 1 FROM oil_discovery WHERE student_key=?", (key,)).fetchone()
+                if existing:
+                    st.error("Бұл студент осы тапсырманы бұрын тапсырған. Мұғалімге хабарласыңыз.")
+                else:
+                    conn.execute("INSERT INTO oil_discovery VALUES (?, ?, ?, ?, ?, ?)",
+                                 (key, oil_name.strip(), oil_class.strip(), oil_team, oil_points, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    st.success(f"Нәтиже сақталды: {oil_points}/20 балл")
 
 with upload_tab:
     st.subheader("📤 Топтық презентацияны жіберу")
@@ -398,10 +505,73 @@ with teacher_tab:
                 st.download_button("📥 Ауызша бағалауды CSV жүктеу", oral_shown.to_csv(index=False).encode("utf-8-sig"),
                                    file_name="geologia_oral_results.csv", mime="text/csv")
         st.divider()
+        st.header("📊 Сабақтың төрт кезеңін бағалау")
+        six_tab, team_tab, summary_tab = st.tabs(["🗣️ 6 сұрақ /30", "👥 Топтық жұмыс /30", "🏆 Қорытынды /100"])
+        with six_tab:
+            st.caption("Әр сұрақ: 0 — қате/жауап жоқ, 1 — жартылай, 3 — негізінен дұрыс, 5 — толық жауап. Ұпай автоматты қосылады.")
+            with st.form("six_questions_form", clear_on_submit=True):
+                six_name = st.text_input("Студенттің аты-жөні", key="six_name")
+                six_class = st.text_input("Сынып/топ атауы (мысалы, ГР-31)", key="six_class")
+                six_team = st.selectbox("Студенттің командасы", TEAM_NAMES, key="six_team")
+                six_points = []
+                for i, question in enumerate(ORAL_SIX):
+                    six_points.append(st.select_slider(f"{i+1}. {question}", options=[0, 1, 3, 5], value=0, key=f"six_q_{i}"))
+                st.write(f"**Ұпай: {sum(six_points)} / 30**")
+                six_submit = st.form_submit_button("💾 6 сұрақ бағасын сақтау", type="primary")
+            if six_submit:
+                if not six_name.strip() or not six_class.strip():
+                    st.error("Аты-жөні мен сынып/топты енгізіңіз.")
+                else:
+                    key = student_key_for(six_name, six_class)
+                    with get_conn() as conn:
+                        conn.execute("""INSERT INTO six_answers
+                            (student_key, student_name, group_name, team_name, q1, q2, q3, q4, q5, q6, score, submitted_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(student_key) DO UPDATE SET
+                            team_name=excluded.team_name, q1=excluded.q1, q2=excluded.q2,
+                            q3=excluded.q3, q4=excluded.q4, q5=excluded.q5, q6=excluded.q6,
+                            score=excluded.score, submitted_at=excluded.submitted_at""",
+                            (key, six_name.strip(), six_class.strip(), six_team, *six_points, sum(six_points), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    st.success(f"Сақталды: {six_name} — {sum(six_points)}/30")
+            six_df = read_lesson_table("six_answers")
+            if not six_df.empty:
+                st.dataframe(six_df[["student_name", "group_name", "team_name", "score"]].rename(columns={"student_name":"Аты-жөні", "group_name":"Сынып/топ", "team_name":"Команда", "score":"Ұпай /30"}), hide_index=True)
+        with team_tab:
+            st.caption("Команданың ұпайы осы командаға тіркелген барлық студентке беріледі. Сынып/топ атауын студенттер енгізгендей жазыңыз.")
+            with st.form("team_form"):
+                team_class = st.text_input("Сынып/топ атауы (мысалы, ГР-31)", key="team_class")
+                team_name = st.selectbox("Бағаланатын команда", TEAM_NAMES, key="team_name")
+                team_points = [st.slider(f"{label} /{maximum}", 0, maximum, 0, key=f"team_criterion_{i}") for i, (label, maximum) in enumerate(GROUP_CRITERIA)]
+                st.write(f"**Ұпай: {sum(team_points)} / 30**")
+                team_submit = st.form_submit_button("💾 Топ бағасын сақтау", type="primary")
+            if team_submit:
+                if not team_class.strip():
+                    st.error("Сынып/топ атауын енгізіңіз.")
+                else:
+                    with get_conn() as conn:
+                        conn.execute("""INSERT INTO group_assessment VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(group_name, team_name) DO UPDATE SET
+                            k1=excluded.k1, k2=excluded.k2, k3=excluded.k3, k4=excluded.k4,
+                            score=excluded.score, submitted_at=excluded.submitted_at""",
+                            (team_class.strip(), team_name, *team_points, sum(team_points), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    st.success(f"Сақталды: {team_name} — {sum(team_points)}/30")
+            team_df = read_lesson_table("group_assessment")
+            if not team_df.empty:
+                st.dataframe(team_df[["group_name", "team_name", "score"]], hide_index=True)
+        with summary_tab:
+            st.caption("Бекіту тестінің бастапқы 9 ұпайы 20 балға пропорционал есептеледі. Аяқталмаған кезеңдер бос көрсетіледі, қорытынды баға қойылмайды.")
+            summary = final_scores()
+            if summary.empty:
+                st.info("Әзірге студенттердің нәтижелері жоқ.")
+            else:
+                st.dataframe(summary, hide_index=True, use_container_width=True)
+                st.download_button("📥 Қорытынды бағаларды CSV жүктеу", summary.to_csv(index=False).encode("utf-8-sig"), file_name="geologia_final_100.csv", mime="text/csv")
+                st.metric("Барлық 4 кезеңді аяқтағандар", int((summary["Кезең"] == "4/4").sum()))
+        st.divider()
         st.subheader("📱 Студенттерге арналған QR-код")
         lan = guess_lan_ip()
         current_port = st.context.url.split(":")[-1].split("/")[0] if ":" in st.context.url.split("//")[-1] else "8501"
-        suggested = f"http://{lan}:{current_port}" if lan else ""
+        suggested = st.context.url if ".streamlit.app" in st.context.url else (f"http://{lan}:{current_port}" if lan else "")
         url = st.text_input("Студенттер кіретін сілтеме", value=suggested,
                             help="Бір Wi-Fi желісінде: http://КОМПЬЮТЕР_IP:8501. Интернетке жарияласаңыз, https://... сілтемесін енгізіңіз.")
         if url.startswith(("http://", "https://")):
