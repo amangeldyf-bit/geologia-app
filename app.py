@@ -925,7 +925,7 @@ with student_tab:
         st.info("Бұл құрылғыда тапсырма аяқталды. Нәтиже мұғалім кестесіне сақталды.")
     else:
         st.write("Барлық тапсырманы орындап, төмендегі **Жіберу** батырмасын басыңыз.")
-        with st.form("homework_form"):
+       with st.form("homework_form_teacher"):
             name = st.text_input("Аты-жөніңіз", placeholder="Мысалы: Айдана Нұрланқызы")
             group = st.text_input("Тобыңыз", placeholder="Мысалы: ГР-31")
             st.divider()
