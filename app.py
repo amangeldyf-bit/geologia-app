@@ -922,22 +922,14 @@ with student_tab:
         c1.metric("Ұпай", f"{result['score']}/{TOTAL}")
         c2.metric("Нәтиже", f"{result['pct']:.1f}%")
         c3.metric("Баға", str(result["grade"]))
-         st.info("Бұл құрылғыда тапсырма аяқталды. Нәтиже мұғалім кестесіне сақталды.")
+        st.info("Бұл құрылғыда тапсырма аяқталды. Нәтиже мұғалім кестесіне сақталды.")
     else:
         st.write("Барлық тапсырманы орындап, төмендегі **Жіберу** батырмасын басыңыз.")
         with st.form("homework_form_teacher"):
             name = st.text_input("Аты-жөніңіз", placeholder="Мысалы: Айдана Нұрланқызы")
             group = st.text_input("Тобыңыз", placeholder="Мысалы: ГР-31")
             st.divider()
-            st.subheader("1-бөлім. Дұрыс жауапты таңдаңыз")
-            selected = []
-            for i, item in enumerate(CHOICE):
-                selected.append(st.radio(
-                    f"{i+1}. {item['q']}",
-                    range(len(item["options"])),
-                    format_func=lambda j, opts=item["options"]: opts[j],
-                    index=None,
-                    key=f"choice_{i}",
+
                 ))
             st.divider()
             st.subheader("2-бөлім. Сәйкестендіріңіз")
