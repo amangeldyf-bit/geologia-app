@@ -922,10 +922,10 @@ with student_tab:
         c1.metric("Ұпай", f"{result['score']}/{TOTAL}")
         c2.metric("Нәтиже", f"{result['pct']:.1f}%")
         c3.metric("Баға", str(result["grade"]))
-        st.info("Бұл құрылғыда тапсырма аяқталды. Нәтиже мұғалім кестесіне сақталды.")
+         st.info("Бұл құрылғыда тапсырма аяқталды. Нәтиже мұғалім кестесіне сақталды.")
     else:
         st.write("Барлық тапсырманы орындап, төмендегі **Жіберу** батырмасын басыңыз.")
-       with st.form("homework_form_teacher"):
+        with st.form("homework_form_teacher"):
             name = st.text_input("Аты-жөніңіз", placeholder="Мысалы: Айдана Нұрланқызы")
             group = st.text_input("Тобыңыз", placeholder="Мысалы: ГР-31")
             st.divider()
