@@ -1,4 +1,7 @@
 import io
+import base64
+import zipfile
+import html
 import os
 import re
 import socket
@@ -112,6 +115,42 @@ def get_oral_results():
         return pd.read_sql_query("SELECT * FROM oral_results ORDER BY submitted_at DESC, id DESC", conn)
 
 
+def init_presentations():
+    with get_conn() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS presentations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_name TEXT NOT NULL,
+            presenter TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            filetype TEXT NOT NULL,
+            content BLOB NOT NULL,
+            uploaded_at TEXT NOT NULL
+        )""")
+
+
+def get_presentations():
+    with get_conn() as conn:
+        return conn.execute("SELECT id, group_name, presenter, filename, filetype, uploaded_at FROM presentations ORDER BY id DESC").fetchall()
+
+
+def get_presentation_file(presentation_id):
+    with get_conn() as conn:
+        return conn.execute("SELECT filename, filetype, content FROM presentations WHERE id=?", (presentation_id,)).fetchone()
+
+
+def validate_presentation(filename, content):
+    suffix = os.path.splitext(filename.lower())[1]
+    if suffix == '.pdf':
+        return content.startswith(b'%PDF-')
+    if suffix == '.pptx':
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                return '[Content_Types].xml' in z.namelist() and 'ppt/presentation.xml' in z.namelist()
+        except (zipfile.BadZipFile, OSError):
+            return False
+    return False
+
+
 def grade_for(pct):
     if pct >= 90:
         return 5
@@ -147,6 +186,7 @@ def guess_lan_ip():
 
 
 initialize()
+init_presentations()
 st.markdown("""
 <style>
 .block-container {max-width: 1050px; padding-top: 2rem;}
@@ -156,7 +196,7 @@ st.markdown("""
 st.title("🛢️ Геологиялық экспедиция")
 st.caption("1-бағалау: интерактивті тапсырмалар • 2-бағалау: ауызша сұрақ-жауап")
 
-student_tab, teacher_tab = st.tabs(["📱 Студент", "👩‍🏫 Мұғалім"])
+student_tab, upload_tab, teacher_tab = st.tabs(["📱 Студент", "📤 Презентация жіберу", "👩‍🏫 Мұғалім"])
 
 with student_tab:
     if st.session_state.get("completed"):
@@ -235,6 +275,32 @@ with student_tab:
                     st.session_state["completed"] = True
                     st.rerun()
 
+
+with upload_tab:
+    st.subheader("📤 Топтық презентацияны жіберу")
+    st.info("QR-код арқылы осы қолданбаға кіріп, топ атауын енгізіңіз және PDF немесе PowerPoint (.pptx) файлын жүктеңіз. Мұғалім оны өз экранынан ашады.")
+    with st.form("presentation_upload", clear_on_submit=True):
+        upload_group = st.selectbox("Топ", ["1-топ — Геофизиктер", "2-топ — Петрофизиктер", "3-топ — Зерттеушілер"])
+        upload_name = st.text_input("Студенттің аты-жөні")
+        upload_file = st.file_uploader("Презентацияны таңдаңыз (PDF немесе PPTX, 15 МБ-қа дейін)", type=["pdf", "pptx"])
+        upload_submit = st.form_submit_button("📤 Мұғалімге жіберу", type="primary")
+    if upload_submit:
+        if not upload_name.strip() or upload_file is None:
+            st.error("Аты-жөніңізді жазып, файлды таңдаңыз.")
+        else:
+            payload = upload_file.getvalue()
+            if not payload or len(payload) > 15 * 1024 * 1024:
+                st.error("Файл бос немесе 15 МБ-тан үлкен.")
+            elif not validate_presentation(upload_file.name, payload):
+                st.error("Тек дұрыс PDF немесе PPTX файлын жіберіңіз.")
+            else:
+                with get_conn() as conn:
+                    conn.execute("INSERT INTO presentations (group_name, presenter, filename, filetype, content, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
+                                 (upload_group, upload_name.strip()[:120], os.path.basename(upload_file.name)[:200],
+                                  os.path.splitext(upload_file.name.lower())[1], payload,
+                                  datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                st.success("Презентация мұғалімге жіберілді! Мұғалім панелінен ашуға болады.")
+
 with teacher_tab:
     st.subheader("Мұғалім панелі")
     if not st.session_state.get("teacher_ok"):
@@ -247,6 +313,26 @@ with teacher_tab:
                 st.error("Құпиясөз дұрыс емес.")
     else:
         st.success("Мұғалім режимі")
+        st.divider()
+        st.subheader("📽️ Студенттердің презентациялары")
+        st.caption("Осы тізімді жаңарту үшін «Нәтижелерді жаңарту» батырмасын басыңыз. PDF браузерде көрсетіледі, PPTX файлды ашу үшін жүктеу қажет.")
+        presentation_rows = get_presentations()
+        if not presentation_rows:
+            st.info("Әзірге презентация жіберілген жоқ.")
+        else:
+            choices = {f"#{r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[5]}": r[0] for r in presentation_rows}
+            picked = st.selectbox("Көрсетілетін презентация", list(choices.keys()))
+            chosen = get_presentation_file(choices[picked])
+            if chosen:
+                file_name, file_type, file_data = chosen
+                st.download_button("⬇️ Презентацияны ашу / жүктеу", data=file_data, file_name=file_name,
+                                   mime="application/pdf" if file_type == '.pdf' else "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+                if file_type == '.pdf':
+                    pdf64 = base64.b64encode(file_data).decode('ascii')
+                    st.components.v1.html(f'<iframe src="data:application/pdf;base64,{pdf64}" width="100%" height="650" style="border:0"></iframe>', height=670)
+                else:
+                    st.info("PowerPoint (.pptx) файлын браузер ішінде тікелей көрсету қолдау таппауы мүмкін. Тікелей экраннан көрсету үшін студенттерге PDF ретінде жіберуді ұсыныңыз.")
+
         if st.button("🔄 Нәтижелерді жаңарту"):
             st.rerun()
         assessment_tab, oral_tab = st.tabs(["1️⃣ Интерактивті тапсырмалар", "2️⃣ Ауызша үй тапсырмасын бағалау"])
